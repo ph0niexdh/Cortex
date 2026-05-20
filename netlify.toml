@@ -1,0 +1,26 @@
+[build]
+  base    = "frontend"
+  command = "npm install && npm run build"
+  publish = "dist"
+
+[build.environment]
+  NODE_VERSION = "20"
+
+[[redirects]]
+  # Return 404 for /api/* so Axios throws and catch blocks handle it.
+  # Force = false so a real backend (proxied) can still respond first.
+  from = "/api/*"
+  to = "/api-not-found"
+  status = 404
+  force = false
+
+[[redirects]]
+  # SPA fallback — all non-file, non-api routes serve index.html
+  from = "/*"
+  to = "/index.html"
+  status = 200
+
+[context.production.environment]
+  # In production, Netlify will look for this variable to know where your backend is hosted.
+  # If not set, it defaults to the local /api proxy (which will fail if the backend isn't there).
+  # VITE_API_URL = "https://your-backend-url.railway.app"

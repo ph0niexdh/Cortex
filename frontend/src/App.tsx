@@ -1,0 +1,250 @@
+import { useEffect, useState } from 'react';
+import { ChatWindow } from './components/Chat/ChatWindow';
+import { MemoryInspector } from './components/MemoryInspector/MemoryInspector';
+import { ThemeToggle } from './components/Layout/ThemeToggle';
+import { ChatHistory } from './components/Layout/ChatHistory';
+import { SettingsModal } from './components/Layout/SettingsModal';
+import { useWebSocket } from './hooks/useWebSocket';
+import { useMemoryStore } from './store/memoryStore';
+import { modelsApi } from './api/client';
+import axios from 'axios';
+import { Brain, ChevronLeft, ChevronRight, Settings, Zap } from 'lucide-react';
+
+function App() {
+  const initialized = useMemoryStore((s) => s.initialized);
+  const initialize = useMemoryStore((s) => s.initialize);
+  const theme             = useMemoryStore((s) => s.theme);
+  const historyOpen       = useMemoryStore((s) => s.historyOpen);
+  const toggleHistory     = useMemoryStore((s) => s.toggleHistory);
+  const activeSessionId   = useMemoryStore((s) => s.activeSessionId);
+  const sessions          = useMemoryStore((s) => s.sessions);
+  const createSession     = useMemoryStore((s) => s.createSession);
+  const loadSession       = useMemoryStore((s) => s.loadSession);
+  const selectedModel     = useMemoryStore((s) => s.selectedModel);
+  const customConfig      = useMemoryStore((s) => s.customConfig);
+  const setSelectedModel  = useMemoryStore((s) => s.setSelectedModel);
+  const setInstalledModels = useMemoryStore((s) => s.setInstalledModels);
+  const userProfile       = useMemoryStore((s) => s.userProfile);
+
+  const fetchMemories       = useMemoryStore((s) => s.fetchMemories);
+  const setMemories         = useMemoryStore((s) => s.setMemories);
+  const localBackendActive  = useMemoryStore((s) => s.localBackendActive);
+
+  const isDemoMode = useMemoryStore(s => s.isDemoMode);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
+
+  useEffect(() => {
+    initialize().then(() => setIsLoading(false));
+  }, [initialize]);
+
+  // Apply theme class
+  useEffect(() => {
+    document.documentElement.classList.toggle('dark', theme === 'dark');
+  }, [theme]);
+
+  // ── On mount: auto-init session + detect installed models ──────────────────
+  useEffect(() => {
+    // 1. Ensure there's always an active session
+    if (!activeSessionId) {
+      if (sessions && Array.isArray(sessions) && sessions.length > 0) {
+        const sorted = [...sessions].sort((a, b) => b.lastUpdated - a.lastUpdated);
+        loadSession(sorted[0].id);
+      } else {
+        createSession();
+      }
+    }
+  }, [activeSessionId, sessions, loadSession, createSession]);
+
+  // ── 2. Handle session-specific memory fetching ──────────────────────────────
+  useEffect(() => {
+    if (activeSessionId) {
+      fetchMemories('default', activeSessionId);
+    } else {
+      setMemories([]);
+    }
+  }, [activeSessionId, fetchMemories, setMemories]);
+
+  useEffect(() => {
+    // 2. Fetch installed Ollama models, auto-select if current isn't available
+    modelsApi.list().then(({ data }) => {
+      const names = Array.isArray(data?.models) ? data.models.map((m) => m.name) : [];
+      setInstalledModels(names);
+
+      // If not using a custom API and the stored model isn't installed, pick the first one
+      if (!customConfig && names.length > 0 && !names.includes(selectedModel)) {
+        setSelectedModel(names[0]);
+      }
+    }).catch(() => {
+      // Ollama might not be running — that's fine, keep the stored model
+    });
+  }, [customConfig, selectedModel, setInstalledModels, setSelectedModel]);
+
+  // ── 3. Auto-detect local backend ──────────────────────────────────────────
+  const setLocalBackendActive = useMemoryStore(s => s.setLocalBackendActive);
+  useEffect(() => {
+    const detectLocal = async () => {
+      try {
+        // Try a direct ping to the local backend port
+        await axios.get('http://127.0.0.1:8000/api/health', { timeout: 1500 });
+        setLocalBackendActive(true);
+      } catch {
+        // Backend not reachable — fall back to cloud/Vite proxy mode
+        setLocalBackendActive(false);
+      }
+    };
+    detectLocal();
+  }, [setLocalBackendActive]);
+
+  useWebSocket();
+
+  if (isLoading || !initialized) {
+    return (
+      <div className="h-screen flex items-center justify-center" style={{ background: 'var(--bg-primary)' }}>
+        <div className="flex flex-col items-center gap-3">
+          <Brain size={32} style={{ color: 'var(--accent)' }} className="animate-pulse" />
+          <span style={{ color: 'var(--text-muted)' }}>Loading encrypted storage...</span>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div
+      className="h-screen flex flex-col"
+      style={{ background: 'var(--bg-primary)' }}
+    >
+      {/* ── Header ── */}
+      <header
+        className="flex items-center justify-between px-4 py-3 flex-shrink-0"
+        style={{
+          background: 'var(--bg-secondary)',
+          borderBottom: '1px solid var(--border)',
+          boxShadow: '0 2px 12px var(--nm-shadow-dark)',
+        }}
+      >
+        <div className="flex items-center gap-3">
+          {/* Collapse toggle */}
+          <button
+            onClick={toggleHistory}
+            className="nm-btn p-2 rounded-xl transition-all"
+            title={historyOpen ? 'Collapse history' : 'Expand history'}
+          >
+            {historyOpen
+              ? <ChevronLeft size={15} style={{ color: 'var(--text-muted)' }} />
+              : <ChevronRight size={15} style={{ color: 'var(--text-muted)' }} />
+            }
+          </button>
+
+          {/* Logo */}
+          <div className="flex items-center gap-2">
+            <div className="nm-btn p-1.5 rounded-xl">
+              <Brain size={18} style={{ color: 'var(--accent)' }} />
+            </div>
+            <span
+              className="font-extrabold text-base tracking-tight"
+              style={{ color: 'var(--text-primary)' }}
+            >
+              Cortex
+            </span>
+            <span
+              className="text-[9px] px-1.5 py-0.5 rounded-md font-bold tracking-wider"
+              style={{ background: 'var(--accent)', color: '#fff', letterSpacing: '0.08em' }}
+            >
+              MVP
+            </span>
+          </div>
+        </div>
+
+        {/* Right side controls */}
+        <div className="flex items-center gap-2">
+          {/* Demo mode badge */}
+          {isDemoMode && (
+            <div className="flex items-center gap-2 px-3 py-1.2 rounded-full text-[10px] font-black tracking-tighter bg-red-600 text-white animate-pulse shadow-[0_0_15px_rgba(220,38,38,0.5)]">
+              <Zap size={10} fill="currentColor" />
+              DEMO MODE ACTIVE
+            </div>
+          )}
+
+          {/* Local mode badge */}
+          {localBackendActive && (
+            <div 
+              className="flex items-center gap-1.5 px-2 py-1 rounded-lg text-[10px] font-bold uppercase tracking-wider bg-green-500/10 text-green-500 border border-green-500/20"
+              title="Connected to direct local server (server.bat)"
+            >
+              <div className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse" />
+              Local Server
+            </div>
+          )}
+
+          {/* User profile indicator */}
+            <span
+              className="hidden sm:flex items-center gap-1 text-[11px] px-2 py-1 rounded-lg"
+              style={{
+                background: 'color-mix(in srgb, var(--accent) 12%, transparent)',
+                color: 'var(--accent)',
+                border: '1px solid color-mix(in srgb, var(--accent) 25%, transparent)',
+              }}
+            >
+              <span>👤</span>
+              <span className="max-w-[120px] truncate">
+                {typeof userProfile === 'string' ? userProfile.split('\n')[0].slice(0, 30) : 'User'}
+              </span>
+            </span>
+
+          {/* Settings button */}
+          <button
+            onClick={() => setSettingsOpen(true)}
+            className="nm-btn p-2 rounded-xl transition-all"
+            title="Settings"
+            style={{ color: 'var(--text-muted)' }}
+          >
+            <Settings size={15} />
+          </button>
+
+          <ThemeToggle />
+        </div>
+      </header>
+
+      {/* ── Body ── */}
+      <div className="flex flex-1 overflow-hidden">
+
+        {/* Left: Chat history */}
+        <aside
+          className="flex-shrink-0 flex flex-col overflow-hidden transition-all duration-250 ease-in-out"
+          style={{
+            width: historyOpen ? '220px' : '0px',
+            opacity: historyOpen ? 1 : 0,
+            borderRight: historyOpen ? '1px solid var(--border)' : 'none',
+          }}
+        >
+          {historyOpen && <ChatHistory />}
+        </aside>
+
+        {/* Center: Chat */}
+        <main
+          className="flex-1 flex flex-col min-w-0"
+          style={{ background: 'var(--bg-primary)' }}
+        >
+          <ChatWindow />
+        </main>
+
+        {/* Right: Memory Inspector — overflow-hidden keeps it inside the flex row */}
+        <aside
+          className="w-72 flex-shrink-0 flex flex-col overflow-hidden"
+          style={{
+            background: 'var(--bg-primary)',
+            borderLeft: '1px solid var(--border)',
+          }}
+        >
+          <MemoryInspector />
+        </aside>
+      </div>
+
+      {/* ── Settings modal ── */}
+      {settingsOpen && <SettingsModal onClose={() => setSettingsOpen(false)} />}
+    </div>
+  );
+}
+
+export default App;
